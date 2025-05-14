@@ -5,10 +5,11 @@ from matplotlib import pyplot as plt
 import numpy as np
 from pettingzoo.utils.conversions import parallel_wrapper_fn
 from weight import *
+from agent import *
 
 # hyperparameters
-learning_rate = 0.001
-n_episodes = 1_000_000
+learning_rate = 0.1
+n_episodes = 100
 start_epsilon = 1.0
 epsilon_decay = start_epsilon / (n_episodes / 2)  # reduce the exploration over time
 final_epsilon = 0.1
@@ -31,7 +32,7 @@ first_obs = obs[env.agents[0]]
 state_dim = first_obs.shape[0]
 action_dim = env.action_space(env.agents[0]).shape[0]
 
-agent = Agent_train(
+agent = IA2CAgent(
     env=env,
     learning_rate=learning_rate,
     initial_epsilon=start_epsilon,
@@ -39,6 +40,7 @@ agent = Agent_train(
     final_epsilon=final_epsilon,
     state_dim=state_dim,
     action_dim=action_dim,
+    training=True
 )
 
 for episode in tqdm(range(n_episodes)):
@@ -57,7 +59,14 @@ for episode in tqdm(range(n_episodes)):
         next_obs, reward, terminated, truncated, info = env.step(actions)
 
         # update the agent
-        agent.update(obs, action, reward, terminated, next_obs)
+        # agent.update(obs, action, reward, terminated, next_obs)
+        agent.update(
+            obs[agent_id],
+            action,
+            reward[agent_id],
+            terminated[agent_id],
+            next_obs[agent_id]
+        )
 
         # update if the environment is done and the current obs
         done = terminated or truncated

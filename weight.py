@@ -129,8 +129,14 @@ class Scenario(BaseScenario):
 
         state_dim = 2 + 2 + num_lm*dim_p + num_lm + dim_c
         action_dim = dim_p + dim_c
-
-        world.agents = [IA2CAgent(state_dim,action_dim) for i in range(number_agent)]
+#         learning_rate = 0.001
+#         n_episodes = 1_000_000
+#         start_epsilon = 1.0
+#         epsilon_decay = start_epsilon / (n_episodes / 2)  # reduce the exploration over time
+#         final_epsilon = 0.1
+#         world.agents = [IA2CAgent(env=env,learning_rate=learning_rate,initial_epsilon=start_epsilon,epsilon_decay=epsilon_decay,final_epsilon=final_epsilon,state_dim=state_dim,action_dim=action_dim,
+# ) for i in range(number_agent)]
+        world.agents = [IA2CAgent(state_dim=state_dim, action_dim=action_dim) for i in range(number_agent)]
 
         # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # path = "./models/MATD3/MATD3_trained_agent.pt"

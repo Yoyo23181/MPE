@@ -80,14 +80,24 @@ class Agent_train(nn.Module):
         next_obs: tuple[int, int, bool],
     ):
         """Updates the Q-value of an action."""
-        future_q_value = (not terminated) * np.max(self.q_values[next_obs])
+        # future_q_value = (not terminated) * np.max(self.q_values[next_obs])
+        # temporal_difference = (
+        #     reward + self.discount_factor * future_q_value - self.q_values[obs][action]
+        # )
+        #
+        # self.q_values[obs][action] = (
+        #     self.q_values[obs][action] + self.lr * temporal_difference
+        # )
+        # self.training_error.append(temporal_difference)
+        obs_key = tuple(obs)
+        next_obs_key = tuple(next_obs)
+
+        future_q_value = (not terminated) * np.max(self.q_values[next_obs_key])
         temporal_difference = (
-            reward + self.discount_factor * future_q_value - self.q_values[obs][action]
+                reward + self.discount_factor * future_q_value - self.q_values[obs_key][action]
         )
 
-        self.q_values[obs][action] = (
-            self.q_values[obs][action] + self.lr * temporal_difference
-        )
+        self.q_values[obs_key][action] += self.lr * temporal_difference
         self.training_error.append(temporal_difference)
 
     def decay_epsilon(self):
