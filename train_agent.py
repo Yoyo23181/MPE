@@ -8,11 +8,14 @@ from weight import *
 from agent import *
 
 # hyperparameters
-learning_rate = 0.1
-n_episodes = 100
+learning_rate = 0.0001
+n_episodes = 1000
 start_epsilon = 1.0
 epsilon_decay = start_epsilon / (n_episodes / 2)  # reduce the exploration over time
 final_epsilon = 0.1
+
+
+max_steps_per_episode = 1000
 
 # env = gym.make("Blackjack-v1", sab=False)
 # env = gym.wrappers.RecordEpisodeStatistics(env, buffer_length=n_episodes)
@@ -27,10 +30,13 @@ final_epsilon = 0.1
 env = parallel_wrapper_fn(raw_env)(render_mode="human", continuous_actions=True)
 
 obs, info = env.reset(seed=42)
+# print("First obs shape:", obs[env.agents[0]].shape)
 
 first_obs = obs[env.agents[0]]
 state_dim = first_obs.shape[0]
-action_dim = env.action_space(env.agents[0]).shape[0]
+# action_dim = env.action_space(env.agents[0]).shape[0]
+action_dim = 2
+# print("train_agent", action_dim)
 
 agent = IA2CAgent(
     env=env,
@@ -43,36 +49,64 @@ agent = IA2CAgent(
     training=True
 )
 
+episode_rewards = []
+episode_lengths = []
+
 for episode in tqdm(range(n_episodes)):
     obs, info = env.reset(seed=42)
+    # obs, info = env.reset(seed=np.random.randint(1_000_000))
     done = False
+    total_reward = 0
+    step_count = 0
+
+
     # play one episode
-    while not done:
+    while not done and step_count < max_steps_per_episode:
         # action = agent.get_action(obs)
 
         agent_id = env.agents[0]  # assuming single agent
         state = torch.FloatTensor(obs[agent_id])
-        action = agent.get_action(state)
+        action_env, action_nn = agent.get_action(state)
+        # print("Action:", action)
 
-        actions = {agent_id: action}
+        actions = {agent_id: action_env}
 
         next_obs, reward, terminated, truncated, info = env.step(actions)
+        # print("next_obs[agent_id] shape:", next_obs[agent_id].shape)
 
-        # update the agent
-        # agent.update(obs, action, reward, terminated, next_obs)
+
+
         agent.update(
-            obs[agent_id],
-            action,
+            obs[agent_id],  # must be shape (10,)
+            action_nn,  # shape (5,) after fix
             reward[agent_id],
             terminated[agent_id],
-            next_obs[agent_id]
+            next_obs[agent_id]  # must be shape (10,)
         )
+        agent_pos = env.aec_env.world.agents[0].state.p_pos
+        print("Agent position:", agent_pos)
+        for i, landmark in enumerate(env.aec_env.world.landmarks):
+            print(f"Landmark {i} position:", landmark.state.p_pos)
 
+        print(total_reward)
+        print("Physical action (u):", action_nn)
         # update if the environment is done and the current obs
-        done = terminated or truncated
+        done = False
+        for agent_id_ter in terminated:
+            done = done or terminated[agent_id_ter]
+            done = done or truncated[agent_id_ter]
         obs = next_obs
 
+        total_reward += reward[agent_id]
+        step_count += 1
+        if total_reward < -25000:
+            done = True
+
+        if episode % 100 == 0 and step_count == 0:
+            print("action_nn:", action_nn)
     agent.decay_epsilon()
+    episode_rewards.append(total_reward)
+    episode_lengths.append(step_count)
 
 
 def get_moving_avgs(arr, window, convolution_mode):
@@ -82,13 +116,15 @@ def get_moving_avgs(arr, window, convolution_mode):
         mode=convolution_mode
     ) / window
 
-# # Smooth over a 500 episode window
+torch.save(agent.state_dict(), "trained_agent_test_1.pth")
+
+# Smooth over a 500 episode window
 # rolling_length = 500
-# fig, axs = plt.subplots(ncols=3, figsize=(12, 5))
-#
+fig, axs = plt.subplots(ncols=3, figsize=(12, 5))
+
 # axs[0].set_title("Episode rewards")
 # reward_moving_average = get_moving_avgs(
-#     env.return_queue,
+#     episode_rewards,
 #     rolling_length,
 #     "valid"
 # )
@@ -96,7 +132,7 @@ def get_moving_avgs(arr, window, convolution_mode):
 #
 # axs[1].set_title("Episode lengths")
 # length_moving_average = get_moving_avgs(
-#     env.length_queue,
+#     episode_lengths,
 #     rolling_length,
 #     "valid"
 # )
@@ -112,56 +148,17 @@ def get_moving_avgs(arr, window, convolution_mode):
 # plt.tight_layout()
 # plt.show()
 
-# from torch.cuda import memory
+# Plot rewards per episode
+axs[0].set_title("Episode rewards")
+axs[0].plot(episode_rewards)
 
-# import simple_v3
-# from weight import raw_env
-# from idp_agent import IA2CAgent
-# import torch
-#
-# def run():
-#     env = raw_env(render_mode="human", continuous_actions=True)
-#     env.reset(seed=42)
-#
-#     first_obs = env.observe(env.agents[0])
-#     state_dim = first_obs.shape[0]
-#     action_dim = env.action_space(env.agents[0]).shape[0]
-#
-#     my_agents = {
-#         agent_id: IA2CAgent(state_dim, action_dim)
-#         for agent_id in env.agents
-#     }
-#
-#     for agent in env.agent_iter():
-#         observation, reward, termination, truncation, info = env.last() # return the result of that agent's previous env.step(action).
-#                                                                         # Observation is a numpy array what the current agent see.
-#                                                                             # Return atm
-#                                                                                 # - coordinates (x,y) of the agent
-#                                                                                 # - velocity of this agent (x,y)
-#                                                                                 # - distance in x and y from landmarks
-#                                                                                 # - weight of each landmarks
-#                                                                         # Reward is a scalar giving the immediate reward that the agent received as result of the previous action
-#                                                                         # termination if true, agent has reached a terminal state
-#                                                                         # truncation if true, agent hit a time limit
-#
-#         if termination or truncation:
-#             print(f"{agent} is done. No more actions.")
-#             action = None
-#         else:
-#             # this is where you would insert your policy
-#             # action = env.action_space(agent).sample() # this is a random action
-#             obs = torch.FloatTensor(observation)
-#             # print(observation)
-#             # print(type(obs))  # <class 'torch.Tensor'>
-#             # print(obs.dtype)  # torch.float32
-#             # print(obs.shape)  # torch.Size([state_dim])
-#             # print(obs)        # prints the tensor values
-#             action = my_agents[agent].get_action(obs) # action is a 5 dimension vector it gives
-#                                                         # - 2 first numbers are the physical forces u_x and u_y what we use to move
-#                                                         # - others 3 are communication channels that can be used to communicate between agents
-#             # print(f"{agent} takes action: {action}")
-#         env.step(action)
-#         # env.render()
-#     env.close()
+# Plot steps per episode
+axs[1].set_title("Episode lengths")
+axs[1].plot(episode_lengths)
 
+# Plot training error per step
+axs[2].set_title("Training Error")
+axs[2].plot(agent.training_error)
 
+plt.tight_layout()
+plt.show()

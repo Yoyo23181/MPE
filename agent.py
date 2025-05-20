@@ -2,46 +2,46 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+from mpe2._mpe_utils.core import Agent, Entity, AgentState, Action
 
 
+# class EntityState:  # Physical state (position, velocity)
+#     def __init__(self):
+#         self.p_pos = None
+#         self.p_vel = None
+#
+#
+# class AgentState(EntityState):  # Adds communication state
+#     def __init__(self):
+#         super().__init__()
+#         self.c = None
+#
+#
+# class Entity:
+#     def __init__(self):
+#         self.name = ""
+#         self.size = 0.050
+#         self.movable = False
+#         self.collide = True
+#         self.density = 25.0
+#         self.color = None
+#         self.max_speed = None
+#         self.accel = None
+#         self.state = EntityState()
+#         self.initial_mass = 1.0
+#
+#     @property
+#     def mass(self):
+#         return self.initial_mass
+#
+#
+# class Action:
+#     def __init__(self):
+#         self.u = None  # physical action
+#         self.c = None  # communication action
 
-class EntityState:  # Physical state (position, velocity)
-    def __init__(self):
-        self.p_pos = None
-        self.p_vel = None
 
-
-class AgentState(EntityState):  # Adds communication state
-    def __init__(self):
-        super().__init__()
-        self.c = None
-
-
-class Entity:
-    def __init__(self):
-        self.name = ""
-        self.size = 0.050
-        self.movable = False
-        self.collide = True
-        self.density = 25.0
-        self.color = None
-        self.max_speed = None
-        self.accel = None
-        self.state = EntityState()
-        self.initial_mass = 1.0
-
-    @property
-    def mass(self):
-        return self.initial_mass
-
-
-class Action:
-    def __init__(self):
-        self.u = None  # physical action
-        self.c = None  # communication action
-
-
-class IA2CAgent(Entity, nn.Module):
+class IA2CAgent(Agent, nn.Module):
     def __init__(
         self,
         env=None,
@@ -54,7 +54,7 @@ class IA2CAgent(Entity, nn.Module):
         discount_factor=0.99,
         training=False,
     ):
-        Entity.__init__(self)
+        Agent.__init__(self)
         nn.Module.__init__(self)
 
         self.env = env
@@ -95,28 +95,103 @@ class IA2CAgent(Entity, nn.Module):
         value = self.critic(x)
         return self.actor(x), value
 
+    # def get_action(self, state):
+    #     x = self.fc(state)
+    #     raw_action = torch.tanh(self.actor(x)).detach().numpy()
+    #
+    #     # Only keep the first 5 action values (2 movement + 3 communication)
+    #     raw_action = raw_action[:5]
+    #
+    #     # Get correct-sized bounds
+    #     space = self.env.action_space(self.env.agents[0])
+    #     low = space.low[:5]
+    #     high = space.high[:5]
+    #
+    #     # Add exploration noise
+    #     raw_action += np.random.normal(0, 0.05, size=raw_action.shape)
+    #
+    #     # Clip to env limits
+    #     clipped_action = np.clip(raw_action, low, high)
+    #     print(clipped_action)
+    #     return clipped_action
+    #
+    #     # print(f"[IA2C] Action output: {action.detach().numpy()}")
+    #     # return action.detach().numpy()
+
     def get_action(self, state):
         # action_probs, _ = self(state)
         # action = torch.multinomial(action_probs, 1).item()
         x = self.fc(state)
-        action = (torch.tanh(self.actor(x)) + 1)/2 # scale to [0;1]
+        y= self.actor(x)
+        # action = (torch.tanh(self.actor(x)) + 1) / 2  # scale to [0;1]
+        y = torch.tanh(y)  # scale to [0;1]
+        action = np.zeros(5)
+        # if y[0] < 0:
+        #     action[1] = - y[0]
+        # else:
+        #     action[2] = y[0]
+        # if y[1] < 0:
+        #     action[3] = - y[1]
+        # else:
+        #     action[4] = y[1]
+        action[1] = torch.relu(-y[0]).item()
+        action[2] = torch.relu(y[0]).item()
+        action[3] = torch.relu(-y[1]).item()
+        action[4] = torch.relu(y[1]).item()
+
+
+        # action[0] = 0
+        # action[1] = 0
+
+        # raw_action = action[:2]
         # action = torch.tanh(self.actor(x)) # scale to [-1;1]
         # print(f"[IA2C] Action output: {action.detach().numpy()}")
-        return action.detach().numpy()
+        # return action.detach().numpy()
+        return action, y.detach().numpy()
+
 
     def get_value(self, state):
         _, value = self(state)
         return value
 
+    # def update(self, obs, action, reward, terminated, next_obs):
+    #     state = torch.FloatTensor(obs)
+    #     next_state = torch.FloatTensor(next_obs)
+    #
+    #     value = self.get_value(state)
+    #     next_value = self.get_value(next_state)
+    #
+    #     target = reward + (0 if terminated else self.discount_factor * next_value.item())
+    #     loss = (target - value) ** 2
+    #
+    #     self.optimizer.zero_grad()
+    #     loss.backward()
+    #     self.optimizer.step()
+    #
+    #     self.training_error.append(loss.item())
+
+
     def update(self, obs, action, reward, terminated, next_obs):
         state = torch.FloatTensor(obs)
         next_state = torch.FloatTensor(next_obs)
 
-        value = self.get_value(state)
-        next_value = self.get_value(next_state)
+        value = self.critic(self.fc(state))
+        next_value = self.critic(self.fc(next_state)).detach()
 
-        target = reward + (0 if terminated else self.discount_factor * next_value.item())
-        loss = (target - value) ** 2
+        target = reward + (0 if terminated else self.discount_factor * next_value)
+        advantage = target - value
+
+        mu = torch.tanh(self.actor(self.fc(state)))
+        dist = torch.distributions.Normal(mu, torch.ones_like(mu) * 0.1)
+        log_prob = dist.log_prob(torch.FloatTensor(action)).sum()
+
+        actor_loss = -log_prob * advantage.detach()
+        critic_loss = advantage.pow(2)
+        loss = actor_loss + critic_loss
+        if self.training:
+            print("Updating agent...")
+            print("Actor loss:", actor_loss.item())
+            print("Critic loss:", critic_loss.item())
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -126,20 +201,6 @@ class IA2CAgent(Entity, nn.Module):
 
     def decay_epsilon(self):
         self.epsilon = max(self.final_epsilon, self.epsilon - self.epsilon_decay)
-
-# class Agent(Entity):  # Simulation agent (non-learned)
-#     def __init__(self):
-#         super().__init__()
-#         self.movable = True
-#         self.silent = False
-#         self.blind = False
-#         self.u_noise = None
-#         self.c_noise = None
-#         self.u_range = 1.0
-#         self.state = AgentState()
-#         self.action = Action()
-#         self.action_callback = None
-
 
 
 

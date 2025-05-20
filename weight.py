@@ -49,63 +49,6 @@ class raw_env(SimpleEnv, EzPickle):
         )
         self.metadata["name"] = "simple_v3"
 
-        # self._weight_labels = []
-
-        # super().render()
-
-    # class raw_env(SimpleEnv, EzPickle):
-        # … your __init__ stays the same …
-
-    #     class raw_env(SimpleEnv, EzPickle):
-    #         # … your __init__ stays the same …
-    #
-    #         def render(self):
-    #             # 1) draw the world and create self.viewer if needed
-    #             super().render()
-    #
-    #             # 2) if there’s no viewer yet, bail
-    #             if self.viewer is None:
-    #                 return
-    #
-    #             # 3) clear old labels
-    #             for lbl in getattr(self, "_weight_labels", []):
-    #                 lbl.delete()
-    #             self._weight_labels = []
-    #
-    #             # 4) draw new ones in BLACK
-    #             w, h = self.viewer.width, self.viewer.height
-    #             lim = getattr(self.world, "boundary", 1.0)
-    #
-    #             for entity in list(self.world.agents) + list(self.world.landmarks):
-    #                 wx, wy = entity.state.p_pos
-    #                 sx = (wx + lim) / (2 * lim) * w
-    #                 sy = (wy + lim) / (2 * lim) * h
-    #                 lbl = Label(
-    #                     text=str(entity.weight),
-    #                     x=sx, y=sy,
-    #                     anchor_x="center", anchor_y="center",
-    #                     font_size=14,
-    #                     color=(0, 0, 0, 255),  # <— draw in black now
-    #                     batch=self.viewer.batch,
-    #                 )
-    #                 self._weight_labels.append(lbl)
-    #
-    # def _entity_to_screen(self, pos):
-    #     """
-    #     Helper to map world coords [-1,1] to screen pixels.
-    #     SimpleEnv stores viewer.width/height in self.viewer
-    #     and sets self.scale internally.
-    #     """
-    #     # these attributes exist on the built-in viewer
-    #     w, h = self.viewer.width, self.viewer.height
-    #     # world limits are [-lim,lim] where lim=self.world.boundary or 1.0 by default
-    #     lim = self.world.boundary if hasattr(self.world, "boundary") else 1.0
-    #
-    #     # map x from [-lim,+lim] → [0,w]; same for y but invert Y if needed
-    #     screen_x = (pos[0] + lim) / (2 * lim) * w
-    #     screen_y = (pos[1] + lim) / (2 * lim) * h
-    #     return screen_x, screen_y
-
 
 
 env = make_env(raw_env)
@@ -118,17 +61,18 @@ number_landmark = 1
 class Scenario(BaseScenario):
     def make_world(self):
         world = World()
-        world.dim_c = 3 # make communication trought c possible?
-        world.collaborative = True
+        world.dim_c = 0 # make communication trought c possible?
+        world.collaborative = False
         # add agents
         # world.agents = [Agent() for i in range(number_agent)]
 
         num_lm = number_landmark
         dim_p = world.dim_p
         dim_c = world.dim_c
-
+        # print("weight", dim_p, dim_c)
         state_dim = 2 + 2 + num_lm*dim_p + num_lm + dim_c
         action_dim = dim_p + dim_c
+        # print("weight", state_dim, action_dim)
 #         learning_rate = 0.001
 #         n_episodes = 1_000_000
 #         start_epsilon = 1.0
@@ -153,7 +97,7 @@ class Scenario(BaseScenario):
             landmark.name = "landmark %d" % i
             landmark.collide = False
             landmark.movable = False
-            landmark.weight = round(np.random.uniform(1, 3))
+            landmark.weight = round(np.random.uniform(1, 1))
         return world
 
     def reset_world(self, world, np_random):
@@ -198,18 +142,32 @@ class Scenario(BaseScenario):
 
             # Reward for moving toward the landmark (based on proximity)
             distance_to_landmark = np.linalg.norm(agent.state.p_pos - landmark.state.p_pos)
-            reward += 1 / (1 + distance_to_landmark)  # Higher reward for being closer to the landmark
+            # reward += 1 / (1 + distance_to_landmark)  # Higher reward for being closer to the landmark
+            # if distance_to_landmark < 1:
+            #     reward += 5 / (1 + distance_to_landmark ** 2)  # sharper reward near target
+            # elif distance_to_landmark > 1 and distance_to_landmark < 2:
+            #     reward += 1 / (1 + distance_to_landmark ** 2)
+            # elif distance_to_landmark > 2 and distance_to_landmark < 10:
+            #     reward -= distance_to_landmark
+            # else :
+            #     reward -= 1000
+            # reward -= distance_to_landmark
+
+            if distance_to_landmark > 10:
+                reward -= 1000
+            else :
+                reward += np.exp(-distance_to_landmark)
 
             # If agents' combined weight is enough to "eat" the landmark
-            if total_weight >= landmark.weight:
-                reward += 10  # Reward for eating the landmark
+            if total_weight >= landmark.weight and distance_to_landmark < 1:
+                reward += 1000  # Reward for eating the landmark
                 world.landmarks.remove(landmark)  # Remove the landmark
 
                 new_lm = Landmark()
                 new_lm.name = f"landmark {len(world.landmarks)}"
                 new_lm.collide = False
                 new_lm.movable = False
-                new_lm.weight = round(np.random.uniform(2, 4))
+                new_lm.weight = round(np.random.uniform(1, 1))
                 new_lm.state.p_pos = np.random.uniform(-1, +1, world.dim_p)
                 new_lm.state.p_vel = np.zeros(world.dim_p)
                 new_lm.state.c = np.zeros(world.dim_c)
@@ -218,6 +176,10 @@ class Scenario(BaseScenario):
                 world.landmarks.append(new_lm) # add a new landmark since the other one was removed
 
                 break  # Only remove one landmark at a time, break after handling it
+            # delta = agent.state.p_pos - landmark.state.p_pos  # vector [dx, dy]
+            # if abs(delta[0]) > 10 or abs(delta[1]) > 10:
+            #     reward -= 1000
+
 
         return reward
 
@@ -237,39 +199,3 @@ class Scenario(BaseScenario):
                 agent.state.c
             ]
         )
-
-    # if __name__ == "__main__":
-    #     # 1. Create the environment
-    #     env = parallel_env()
-    #     observations = env.reset()
-    #
-    #     # 2. Use one observation to determine input/output sizes
-    #     example_obs = observations[env.agents[0]]
-    #     state_dim = example_obs.shape[0]
-    #     action_dim = env.action_space(env.agents[0]).n
-    #
-    #     # 3. Create one IA2CAgent per agent in the environment
-    #     agents = {
-    #         agent_id: IA2CAgent(state_dim, action_dim)
-    #         for agent_id in env.agents
-    #     }
-    #
-    #     # 4. Run loop to let IA2C agents interact with environment
-    #     for step in range(100):  # Or max_cycles
-    #         actions = {}
-    #
-    #         # Each IA2C agent decides its own action
-    #         for agent_id in env.agents:
-    #             obs = torch.FloatTensor(observations[agent_id])
-    #             action = agents[agent_id].get_action(obs)
-    #             actions[agent_id] = action
-    #
-    #         # 5. Step environment with selected actions
-    #         observations, rewards, terminations, truncations, infos = env.step(actions)
-    #
-    #         # Optional: print debug info
-    #         print(f"Step {step}: Actions: {actions}, Rewards: {rewards}")
-    #
-    #         # 6. Stop early if all agents are done
-    #         if all(terminations.values()) or all(truncations.values()):
-    #             break
