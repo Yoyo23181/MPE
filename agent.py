@@ -102,7 +102,7 @@ class IA2CAgent(Agent, nn.Module):
         target = reward + (0 if terminated else self.discount_factor * next_value)
         advantage = target - value
 
-        mu = torch.tanh(self.actor(self.fc(state)))
+        mu = torch.tanh(self.actor(self.fc(state))).unsqueeze(-1)
         dist = torch.distributions.Normal(mu, torch.ones_like(mu) * 0.1)
         log_prob = dist.log_prob(torch.FloatTensor(action)).sum()
 
@@ -118,16 +118,22 @@ class IA2CAgent(Agent, nn.Module):
         before = self.actor.weight.clone()
 
         # Update actor
+        # self.actor_optimizer.zero_grad()
+        # actor_loss.backward(retain_graph=True)
+        # self.actor_optimizer.step()
+        #
+        # after = self.actor.weight
+        # print("Actor weights changed:", not torch.equal(before, after))
+        #
+        #     # Update critic
+        # self.critic_optimizer.zero_grad()
+        # critic_loss.backward(retain_graph=True)
+        # self.critic_optimizer.step()
+
         self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        self.actor_optimizer.step()
-
-        after = self.actor.weight
-        print("Actor weights changed:", not torch.equal(before, after))
-
-            # Update critic
         self.critic_optimizer.zero_grad()
-        critic_loss.backward(retain_graph=True)
+        loss.backward()
+        self.actor_optimizer.step()
         self.critic_optimizer.step()
 
         self.training_error.append(loss.item())
