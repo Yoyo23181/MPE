@@ -5,42 +5,6 @@ import numpy as np
 from mpe2._mpe_utils.core import Agent, Entity, AgentState, Action
 
 
-# class EntityState:  # Physical state (position, velocity)
-#     def __init__(self):
-#         self.p_pos = None
-#         self.p_vel = None
-#
-#
-# class AgentState(EntityState):  # Adds communication state
-#     def __init__(self):
-#         super().__init__()
-#         self.c = None
-#
-#
-# class Entity:
-#     def __init__(self):
-#         self.name = ""
-#         self.size = 0.050
-#         self.movable = False
-#         self.collide = True
-#         self.density = 25.0
-#         self.color = None
-#         self.max_speed = None
-#         self.accel = None
-#         self.state = EntityState()
-#         self.initial_mass = 1.0
-#
-#     @property
-#     def mass(self):
-#         return self.initial_mass
-#
-#
-# class Action:
-#     def __init__(self):
-#         self.u = None  # physical action
-#         self.c = None  # communication action
-
-
 class IA2CAgent(Agent, nn.Module):
     def __init__(
         self,
@@ -84,14 +48,19 @@ class IA2CAgent(Agent, nn.Module):
         self.actor = nn.Linear(128, action_dim)
         self.critic = nn.Linear(128, 1)
 
+
         if training:
-            self.optimizer = torch.optim.Adam(
-                list(self.actor.parameters()) +
-                list(self.critic.parameters()) +
-                list(self.fc.parameters()), lr=learning_rate
+            self.actor_optimizer = torch.optim.Adam(
+                list(self.fc.parameters()) + list(self.actor.parameters()),
+                lr=learning_rate
+            )
+            self.critic_optimizer = torch.optim.Adam(
+                list(self.fc.parameters()) + list(self.critic.parameters()),
+                lr=learning_rate
             )
         else:
             self.optimizer = None  # avoid empty parameter list error
+
 
     def forward(self, state):
         x = self.fc(state)
@@ -99,28 +68,6 @@ class IA2CAgent(Agent, nn.Module):
         value = self.critic(x)
         return self.actor(x), value
 
-    # def get_action(self, state):
-    #     x = self.fc(state)
-    #     raw_action = torch.tanh(self.actor(x)).detach().numpy()
-    #
-    #     # Only keep the first 5 action values (2 movement + 3 communication)
-    #     raw_action = raw_action[:5]
-    #
-    #     # Get correct-sized bounds
-    #     space = self.env.action_space(self.env.agents[0])
-    #     low = space.low[:5]
-    #     high = space.high[:5]
-    #
-    #     # Add exploration noise
-    #     raw_action += np.random.normal(0, 0.05, size=raw_action.shape)
-    #
-    #     # Clip to env limits
-    #     clipped_action = np.clip(raw_action, low, high)
-    #     print(clipped_action)
-    #     return clipped_action
-    #
-    #     # print(f"[IA2C] Action output: {action.detach().numpy()}")
-    #     # return action.detach().numpy()
 
     def get_action(self, state):
         # action_probs, _ = self(state)
@@ -130,49 +77,19 @@ class IA2CAgent(Agent, nn.Module):
         # action = (torch.tanh(self.actor(x)) + 1) / 2  # scale to [0;1]
         y = torch.tanh(y)  # scale to [0;1]
         action = np.zeros(5)
-        # if y[0] < 0:
-        #     action[1] = - y[0]
-        # else:
-        #     action[2] = y[0]
-        # if y[1] < 0:
-        #     action[3] = - y[1]
-        # else:
-        #     action[4] = y[1]
+
         action[1] = torch.relu(-y[0]).item()
         action[2] = torch.relu(y[0]).item()
         action[3] = torch.relu(-y[1]).item()
         action[4] = torch.relu(y[1]).item()
 
 
-        # action[0] = 0
-        # action[1] = 0
-
-        # raw_action = action[:2]
-        # action = torch.tanh(self.actor(x)) # scale to [-1;1]
-        # print(f"[IA2C] Action output: {action.detach().numpy()}")
-        # return action.detach().numpy()
         return action, y.detach().numpy()
 
 
     def get_value(self, state):
         _, value = self(state)
         return value
-
-    # def update(self, obs, action, reward, terminated, next_obs):
-    #     state = torch.FloatTensor(obs)
-    #     next_state = torch.FloatTensor(next_obs)
-    #
-    #     value = self.get_value(state)
-    #     next_value = self.get_value(next_state)
-    #
-    #     target = reward + (0 if terminated else self.discount_factor * next_value.item())
-    #     loss = (target - value) ** 2
-    #
-    #     self.optimizer.zero_grad()
-    #     loss.backward()
-    #     self.optimizer.step()
-    #
-    #     self.training_error.append(loss.item())
 
 
     def update(self, obs, action, reward, terminated, next_obs):
@@ -192,14 +109,26 @@ class IA2CAgent(Agent, nn.Module):
         actor_loss = -log_prob * advantage.detach()
         critic_loss = advantage.pow(2)
         loss = actor_loss + critic_loss
+
         if self.training:
             print("Updating agent...")
             print("Actor loss:", actor_loss.item())
             print("Critic loss:", critic_loss.item())
 
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        before = self.actor.weight.clone()
+
+        # Update actor
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
+
+        after = self.actor.weight
+        print("Actor weights changed:", not torch.equal(before, after))
+
+            # Update critic
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward(retain_graph=True)
+        self.critic_optimizer.step()
 
         self.training_error.append(loss.item())
 

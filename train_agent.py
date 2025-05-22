@@ -20,7 +20,7 @@ def weights_changed(old_weights, new_weights):
 
 
 # hyperparameters
-learning_rate = 0.0001
+learning_rate = 1e-5
 n_episodes = 500
 start_epsilon = 1.0
 epsilon_decay = start_epsilon / (n_episodes / 2)  # reduce the exploration over time
