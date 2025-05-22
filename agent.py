@@ -85,7 +85,8 @@ class IA2CAgent(Agent, nn.Module):
         self.critic = nn.Linear(128, 1)
 
         if training:
-            self.optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
+            self.actor_optimizer = torch.optim.Adam(list(self.actor.parameters()) + list(self.fc.parameters()), lr=learning_rate)
+            self.critic_optimizer = torch.optim.Adam(list(self.critic.parameters()) + list(self.fc.parameters()), lr=learning_rate)
         else:
             self.optimizer = None  # avoid empty parameter list error
 
@@ -193,15 +194,17 @@ class IA2CAgent(Agent, nn.Module):
             print("Actor loss:", actor_loss.item())
             print("Critic loss:", critic_loss.item())
 
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        # Update actor
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward(retain_graph=True)  # retain_graph in case critic uses same graph
+        self.actor_optimizer.step()
+
+            # Update critic
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
 
         self.training_error.append(loss.item())
 
     def decay_epsilon(self):
         self.epsilon = max(self.final_epsilon, self.epsilon - self.epsilon_decay)
-
-
-
-

@@ -23,6 +23,8 @@ from pettingzoo.utils.conversions import parallel_wrapper_fn
 from agent import IA2CAgent
 # from agents.mimic_agent import Agent
 
+
+
 class raw_env(SimpleEnv, EzPickle):
     def __init__(self, max_cycles=2500, continuous_actions=False, render_mode="human"):
 
@@ -124,45 +126,75 @@ class Scenario(BaseScenario):
             # landmark.state.p_vel = np_random.uniform(-0.5, 0.5, world.dim_p)
             landmark.state.p_vel = np.zeros(world.dim_p)
 
+
+    # def reward(self, agent, world):
+    #     reward = 0
+    #     radius = 1.0
+    #
+    #     for landmark in world.landmarks:
+    #
+    #         nearby_agents = [a for a in world.agents if np.linalg.norm(a.state.p_pos - landmark.state.p_pos) < radius]
+    #
+    #         total_weight = sum([a.weight for a in nearby_agents])
+    #
+    #         current_distance = np.linalg.norm(agent.state.p_pos - landmark.state.p_pos)
+    #
+    #         if hasattr(agent, "prev_distance"):
+    #             reward += agent.prev_distance - current_distance  # positive if getting closer
+    #
+    #
+    #         agent.prev_distance = current_distance
+    #         if current_distance > 10:
+    #             reward -= 1
+    #
+    #
+    #         if total_weight >= landmark.weight and current_distance < radius:
+    #             reward += 10  # Reward for eating the landmark
+    #             world.landmarks.remove(landmark)  # Remove the landmark
+    #
+    #             new_lm = Landmark()
+    #             new_lm.name = f"landmark {len(world.landmarks)}"
+    #             new_lm.collide = False
+    #             new_lm.movable = False
+    #             new_lm.weight = round(np.random.uniform(1, 1))
+    #             new_lm.state.p_pos = np.random.uniform(-1, +1, world.dim_p)
+    #             new_lm.state.p_vel = np.zeros(world.dim_p)
+    #             new_lm.state.c = np.zeros(world.dim_c)
+    #             new_lm.color = np.array([0.75, 0.75, 0.75])
+    #
+    #             world.landmarks.append(new_lm) # add a new landmark since the other one was removed
+    #
+    #             break
+    #
+    #     return reward
+
+
     def reward(self, agent, world):
         reward = 0
-        # pos = agent.state.p_pos
-        # # if x or y outside the box
-        # if (pos[0] < -10.0) or (pos[0] > 10.0) or (pos[1] < -10.0) or (pos[1] > 10.0):
-        #     reward -= 30.0
-        #     # optional: clamp position back into the box so the agent can’t wander off
-        #     agent.state.p_pos = np.clip(pos, -10.0, 10.0)
+        radius = 1.0
+        punishment_distance = 10.0
         for landmark in world.landmarks:
-            # Find nearby agents around each landmark (within a distance of 0.2)
-            nearby_agents = [a for a in world.agents if np.linalg.norm(a.state.p_pos - landmark.state.p_pos) < 0.4]
-            # for i, lm in enumerate(world.agents):
-            #     print(f"[Agent {i}] pos={lm.state.p_pos}, vel={lm.state.p_vel}")
-            # Calculate total weight of nearby agents
+            current_distance = np.linalg.norm(agent.state.p_pos - landmark.state.p_pos)
+
+
+            if hasattr(agent, "prev_distance"):
+                shaping = agent.prev_distance - current_distance
+                reward += shaping * 10
+
+            agent.prev_distance = current_distance
+
+            if current_distance > punishment_distance:
+                reward -= 100
+
+
+            nearby_agents = [a for a in world.agents if np.linalg.norm(a.state.p_pos - landmark.state.p_pos) < radius]
             total_weight = sum([a.weight for a in nearby_agents])
 
-            # Reward for moving toward the landmark (based on proximity)
-            distance_to_landmark = np.linalg.norm(agent.state.p_pos - landmark.state.p_pos)
-            # reward += 1 / (1 + distance_to_landmark)  # Higher reward for being closer to the landmark
-            # if distance_to_landmark < 1:
-            #     reward += 5 / (1 + distance_to_landmark ** 2)  # sharper reward near target
-            # elif distance_to_landmark > 1 and distance_to_landmark < 2:
-            #     reward += 1 / (1 + distance_to_landmark ** 2)
-            # elif distance_to_landmark > 2 and distance_to_landmark < 10:
-            #     reward -= distance_to_landmark
-            # else :
-            #     reward -= 1000
-            # reward -= distance_to_landmark
+            if total_weight >= landmark.weight and current_distance < radius:
+                reward += 1000
 
-            if distance_to_landmark > 10:
-                reward -= 1000
-            else :
-                reward += np.exp(-distance_to_landmark)
 
-            # If agents' combined weight is enough to "eat" the landmark
-            if total_weight >= landmark.weight and distance_to_landmark < 1:
-                reward += 1000  # Reward for eating the landmark
-                world.landmarks.remove(landmark)  # Remove the landmark
-
+                world.landmarks.remove(landmark)
                 new_lm = Landmark()
                 new_lm.name = f"landmark {len(world.landmarks)}"
                 new_lm.collide = False
@@ -172,16 +204,11 @@ class Scenario(BaseScenario):
                 new_lm.state.p_vel = np.zeros(world.dim_p)
                 new_lm.state.c = np.zeros(world.dim_c)
                 new_lm.color = np.array([0.75, 0.75, 0.75])
-
-                world.landmarks.append(new_lm) # add a new landmark since the other one was removed
-
-                break  # Only remove one landmark at a time, break after handling it
-            # delta = agent.state.p_pos - landmark.state.p_pos  # vector [dx, dy]
-            # if abs(delta[0]) > 10 or abs(delta[1]) > 10:
-            #     reward -= 1000
-
+                world.landmarks.append(new_lm)
+                break
 
         return reward
+
 
     def observation(self, agent, world):
         entity_pos = []
