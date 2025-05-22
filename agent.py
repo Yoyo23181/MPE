@@ -77,16 +77,19 @@ class IA2CAgent(Agent, nn.Module):
 
         self.fc = nn.Sequential(
             nn.Linear(state_dim, 128),
-            nn.ReLU(),
+            nn.ReLU(inplace=False),
             nn.Linear(128, 128),
-            nn.ReLU()
+            nn.ReLU(inplace=False)
         )
         self.actor = nn.Linear(128, action_dim)
         self.critic = nn.Linear(128, 1)
 
         if training:
-            self.actor_optimizer = torch.optim.Adam(list(self.actor.parameters()) + list(self.fc.parameters()), lr=learning_rate)
-            self.critic_optimizer = torch.optim.Adam(list(self.critic.parameters()) + list(self.fc.parameters()), lr=learning_rate)
+            self.optimizer = torch.optim.Adam(
+                list(self.actor.parameters()) +
+                list(self.critic.parameters()) +
+                list(self.fc.parameters()), lr=learning_rate
+            )
         else:
             self.optimizer = None  # avoid empty parameter list error
 
@@ -194,15 +197,9 @@ class IA2CAgent(Agent, nn.Module):
             print("Actor loss:", actor_loss.item())
             print("Critic loss:", critic_loss.item())
 
-        # Update actor
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward(retain_graph=True)  # retain_graph in case critic uses same graph
-        self.actor_optimizer.step()
-
-            # Update critic
-        self.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        self.critic_optimizer.step()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
         self.training_error.append(loss.item())
 
