@@ -184,15 +184,14 @@ class Scenario(BaseScenario):
             agent.prev_distance = current_distance
 
             if current_distance > punishment_distance:
-                reward -= 100
+                reward -= 1000
 
 
             nearby_agents = [a for a in world.agents if np.linalg.norm(a.state.p_pos - landmark.state.p_pos) < radius]
             total_weight = sum([a.weight for a in nearby_agents])
 
-            if total_weight >= landmark.weight and current_distance < radius:
-                reward += 1000
 
+            if total_weight >= landmark.weight and current_distance < radius:
 
                 world.landmarks.remove(landmark)
                 new_lm = Landmark()

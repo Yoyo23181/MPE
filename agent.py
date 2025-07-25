@@ -117,18 +117,7 @@ class IA2CAgent(Agent, nn.Module):
 
         before = self.actor.weight.clone()
 
-        # Update actor
-        # self.actor_optimizer.zero_grad()
-        # actor_loss.backward(retain_graph=True)
-        # self.actor_optimizer.step()
-        #
-        # after = self.actor.weight
-        # print("Actor weights changed:", not torch.equal(before, after))
-        #
-        #     # Update critic
-        # self.critic_optimizer.zero_grad()
-        # critic_loss.backward(retain_graph=True)
-        # self.critic_optimizer.step()
+
 
         self.actor_optimizer.zero_grad()
         self.critic_optimizer.zero_grad()

@@ -109,7 +109,7 @@ for episode in tqdm(range(n_episodes)):
         # print("Agent position:", agent_pos)
         # for i, landmark in enumerate(env.aec_env.world.landmarks):
         #     print(f"Landmark {i} position:", landmark.state.p_pos)
-
+        print("this is the obs" , obs[agent_id])
         # print(total_reward)
         print("Physical action (u):", action_nn)
         # update if the environment is done and the current obs

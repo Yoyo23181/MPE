@@ -38,10 +38,11 @@ agent = IA2CAgent(
     action_dim=action_dim,
     training=False
 )
-agent.load_state_dict(torch.load("trained_agent_new_action.pth"))
+agent.load_state_dict(torch.load("trained_agent_test_1.pth"))
 agent.eval()
 print("Loaded trained model.")
 test_episodes = 5  # Adjust this number as needed
+reward_during_time = []
 
 for episode in range(test_episodes):
     obs, info = env.reset(seed=np.random.randint(1_000_000))
@@ -59,7 +60,8 @@ for episode in range(test_episodes):
         actions = {agent_id: action_env}
         next_obs, reward, terminated, truncated, info = env.step(actions)
 
-
+        reward_during_time.append(reward)
+        print("Reward:", reward)
         # Check done status
         done = any(terminated.values()) or any(truncated.values())
         obs = next_obs
@@ -76,3 +78,10 @@ for episode in range(test_episodes):
     print(f"Total Reward: {total_reward:.2f}")
     print(f"Steps taken: {step_count}")
 
+
+fig, axs = plt.subplots(ncols=1, figsize=(12, 5))
+
+axs.set_title("Reward during time")
+axs.plot([reward['agent_0'] for reward in reward_during_time])
+plt.tight_layout()
+plt.show()
