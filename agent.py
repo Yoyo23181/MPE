@@ -24,35 +24,45 @@ class IA2CAgent(nn.Module):
         self.action_dim = action_dim
 
         # self.action_callback = None
+        #
+        # self.fc = nn.Sequential(
+        #     nn.Linear(self.state_dim, 128),
+        #     nn.Tanh(),
+        #     nn.Linear(128, 128),
+        #     nn.Tanh()
+        # )
+        #
+        # self.fc = nn.Sequential(
+        #     self._layer_init(nn.Linear(self.state_dim, 256)),
+        #     nn.ReLU(),
+        #     nn.Linear(256, 256),
+        #     nn.ReLU(),
+        #     self._layer_init(nn.Linear(256, 128)),
+        #     nn.ReLU()
+        # )
 
         self.fc = nn.Sequential(
-            nn.Linear(self.state_dim, 128),
-            nn.Tanh(),
-            nn.Linear(128, 128),
-            nn.Tanh()
-        )
-
-        self.fc = nn.Sequential(
-            self._layer_init(nn.Linear(self.state_dim, 256)),
+            nn.Linear(self.state_dim, 256),
             nn.ReLU(),
-            # nn.Linear(256, 256),
-            # nn.ReLU(),
-            self._layer_init(nn.Linear(256, 128)),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
             nn.ReLU()
         )
 
         # self.fc = nn.LSTM(input_size=state_dim, hidden_size=128)
         # self.init_hidden(hidden_size=128, batch_size=1)
-        self.actor = nn.Sequential(self._layer_init(nn.Linear(128, self.action_dim), std= 0.01))
-        self.log_std = nn.Parameter(torch.zeros(action_dim))
-        self.critic = nn.Sequential(self._layer_init(nn.Linear(128, 1)))
+        self.actor = nn.Sequential(nn.Linear(128, self.action_dim), nn.Sigmoid())
+        # self.log_std = nn.Parameter(torch.zeros(action_dim))
+        self.critic = nn.Sequential(nn.Linear(128, 1))
 
+        self.log_std= torch.tensor([0.1], dtype=torch.float32).to(self.device)
 
         if training:
             self.optimizer = torch.optim.Adam(
                 list(self.fc.parameters()) +
                 list(self.actor.parameters()) +
-                [self.log_std] +
+                # [self.log_std] +
                 list(self.critic.parameters()),
                 lr=learning_rate_actor,
                 eps=1e-5
@@ -119,14 +129,15 @@ class IA2CAgent(nn.Module):
 
 
     def get_train_action(self, state):
+
         out = self.fc(state)
         mu = self.actor(out)
         # e.g., sigmoid output in [0,1] or tanh
-        std = torch.exp(self.log_std)  # assuming you added this
-        dist = torch.distributions.Normal(mu, std)
-        action = dist.sample()  # ← critical!
-        action = action *0.5 + 0.5
-        return action.clamp(0.0, 1.0).detach(), mu.detach(), dist.log_prob(action).sum(dim=-1).detach(), dist.entropy().sum(dim=-1).detach()
+        # std = torch.exp(self.log_std)  # assuming you added this
+        # dist = torch.distributions.Normal(mu, std)
+        # action = dist.sample()  # ← critical!
+        # action = action *0.5 + 0.5
+        return mu.detach()
 
     def get_reward(self, reward, next_state):
         reward = torch.tensor(reward, dtype=torch.float32).unsqueeze(0).to(self.device)  # ensure reward is a tensor
@@ -138,7 +149,7 @@ class IA2CAgent(nn.Module):
     def get_train_action_new(self, state):
         out = self.fc(state)
         value = self.critic(out)
-        mu = torch.tanh(self.actor(out))  # ensure in [-1, 1]
+        mu = self.actor(out)  # ensure in [-1, 1]
         std = torch.exp(self.log_std)
         dist = torch.distributions.Normal(mu, std)
         action = dist.rsample()  # <--- reparameterized sample
@@ -153,7 +164,7 @@ class IA2CAgent(nn.Module):
         self.entropy_list = torch.cat((self.entropy_list, entropy.unsqueeze(0).to(self.device)), dim=0)
         self.value_list = torch.cat((self.value_list, value.unsqueeze(0).to(self.device)), dim=0)
 
-        return scaled_action.clone().detach()
+        return mu.clone().detach()
 
     def get_value(self, state):
         _, value = self(state)
@@ -236,6 +247,7 @@ class IA2CAgent(nn.Module):
 
         self.optimizer.zero_grad()
         total_loss.backward()
+
         # torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
         # torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
         self.optimizer.step()

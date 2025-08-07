@@ -106,9 +106,8 @@ class train_agent:
         self.nn_agent.reset_episode_tensors()
         for step in range(self.episode_steps):
             obs, reward, action= self.step()
-
+            self.log_training_batch(obs, reward, action)
             self.log_step(obs, reward, action)
-        self.get_internal_state()
 
     def get_internal_state(self):
         self.mu_list = self.nn_agent.mu_list.detach().cpu().numpy()
@@ -117,7 +116,13 @@ class train_agent:
 
 
     def update_agent(self):
-        actor_loss, critic_loss, avantage = self.nn_agent.batch_update_new()
+
+
+        actor_loss, critic_loss, avantage = self.nn_agent.batch_update(torch.Tensor(self.episode_obs[1:]).to(self.device),
+                                                                      torch.Tensor(self.episode_actions).to(self.device),
+                                                                      torch.Tensor(self.episode_rewards).to(self.device))
+
+
         self.actor_loss_list.append(actor_loss)
         self.critic_loss_list.append(critic_loss)
         self.advantage_list.append(avantage)
@@ -140,7 +145,7 @@ class train_agent:
         else:
             with torch.no_grad():
                 state = torch.FloatTensor(self.episode_obs[-1]).to(self.device)  # convert to tensor and move to device
-            action_nn = self.nn_agent.get_train_action_new(state)
+            action_nn = self.nn_agent.get_train_action(state)
             action_nn = action_nn.cpu().numpy()
 
         actions[agent_id] = action_nn
@@ -163,7 +168,10 @@ class train_agent:
             self.reset_lists()
             self.run_episode()
             self.update_agent()
+            # self.get_internal_state()
+
             self.plot_update()
+
 
         self.save_network("nn_agent.pth")
         self.final_plot()
@@ -269,7 +277,7 @@ if __name__=="__main__":
     episode_steps = 200
     warmup_eps = 0  # number of episodes to explore randomly before training
     network_path = "nn_agent_dir_good.pth"
-    network_path = None
+    # network_path = None
     trainer = train_agent(n_episodes=n_episodes, episode_steps=episode_steps, warmup_eps=warmup_eps, networkpath=network_path)
     trainer.train()
 
