@@ -25,15 +25,11 @@ obs, info = env.reset(seed=42)
 first_obs = obs[env.agents[0]]
 state_dim = first_obs.shape[0]
 # action_dim = env.action_space(env.agents[0]).shape[0]
-action_dim = 2
+action_dim = 1
+state_dim = 2
 # print("train_agent", action_dim)
 
 agent = IA2CAgent(
-    env=env,
-    learning_rate=learning_rate,
-    initial_epsilon=start_epsilon,
-    epsilon_decay=epsilon_decay,
-    final_epsilon=final_epsilon,
     state_dim=state_dim,
     action_dim=action_dim,
     training=False
@@ -45,7 +41,7 @@ test_episodes = 5  # Adjust this number as needed
 reward_during_time = []
 
 for episode in range(test_episodes):
-    obs, info = env.reset(seed=np.random.randint(1_000_000))
+    obs, info = env.reset(seed=np.random.randint(42))
     done = False
     total_reward = 0
     step_count = 0
