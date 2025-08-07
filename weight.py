@@ -198,7 +198,7 @@ class Scenario(BaseScenario):
                 speed = agent.prev_distance - current_distance
                 agent.entity_speed = speed
                 # shaping = speed*10
-                reward += speed*10
+                reward += speed
                 # shaping = np.clip(shaping, -1, 1)
                 # reward += 10/(current_distance-radius)
             agent.prev_distance = current_distance
@@ -213,7 +213,7 @@ class Scenario(BaseScenario):
 
             # if total_weight >= landmark.weight and current_distance < radius:
             if current_distance <= radius:
-                reward += 10
+                reward += 1
                 agent.prev_distance = None  # reset the previous distance
                 world.landmarks.remove(landmark)
                 new_lm = Landmark()
@@ -261,9 +261,9 @@ class Scenario(BaseScenario):
             # else:
             #     entity_velocity = np.zeros_like(current_pos)
             # agent.previous_food_pos = current_pos
-            # entity_pos.append(np.array([s, theta_speed ]))
+            entity_pos.append(np.array([s, theta_speed ]))
             # entity_pos.append(np.array([R, s, theta_2]))
-            entity_pos.append(pos)
+            # entity_pos.append(pos)
             # entity_weights.append(entity.weight)
         # print(agent.state.c)
         return np.concatenate(

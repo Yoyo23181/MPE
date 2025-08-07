@@ -24,45 +24,36 @@ class IA2CAgent(nn.Module):
         self.action_dim = action_dim
 
         # self.action_callback = None
-        #
-        # self.fc = nn.Sequential(
-        #     nn.Linear(self.state_dim, 128),
-        #     nn.Tanh(),
-        #     nn.Linear(128, 128),
-        #     nn.Tanh()
-        # )
-        #
-        # self.fc = nn.Sequential(
-        #     self._layer_init(nn.Linear(self.state_dim, 256)),
-        #     nn.ReLU(),
-        #     nn.Linear(256, 256),
-        #     nn.ReLU(),
-        #     self._layer_init(nn.Linear(256, 128)),
-        #     nn.ReLU()
-        # )
 
         self.fc = nn.Sequential(
-            nn.Linear(self.state_dim, 256),
+            nn.Linear(self.state_dim, 128),
+            nn.Tanh(),
+            nn.Linear(128, 128),
+            nn.Tanh()
+        )
+
+        self.fc = nn.Sequential(
+            self._layer_init(nn.Linear(self.state_dim, 256)),
             nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
+            # nn.Linear(256, 256),
+            # nn.ReLU(),
+            self._layer_init(nn.Linear(256, 128)),
             nn.ReLU()
         )
 
         # self.fc = nn.LSTM(input_size=state_dim, hidden_size=128)
         # self.init_hidden(hidden_size=128, batch_size=1)
-        self.actor = nn.Sequential(nn.Linear(128, self.action_dim), nn.Sigmoid())
-        # self.log_std = nn.Parameter(torch.zeros(action_dim))
-        self.critic = nn.Sequential(nn.Linear(128, 1))
+        self.actor = nn.Sequential(self._layer_init(nn.Linear(128, self.action_dim), std= 0.01))
+        self.log_std = nn.Parameter(torch.zeros(action_dim))
+        self.critic = nn.Sequential(self._layer_init(nn.Linear(128, 1)))
 
-        self.log_std= torch.tensor([0.1], dtype=torch.float32).to(self.device)
 
         if training:
+            self.train()
             self.optimizer = torch.optim.Adam(
                 list(self.fc.parameters()) +
                 list(self.actor.parameters()) +
-                # [self.log_std] +
+                [self.log_std] +
                 list(self.critic.parameters()),
                 lr=learning_rate_actor,
                 eps=1e-5
@@ -71,16 +62,22 @@ class IA2CAgent(nn.Module):
         else:
             self.optimizer = None  # avoid empty parameter list error
 
-        self.test_layers()
+        # self.test_layers()
         self.reset_episode_tensors()
 
     def reset_episode_tensors(self):
-        self.log_prob_list = torch.empty((0, self.action_dim)).to(self.device)
-        self.mu_list = torch.empty((0,self.action_dim)).to(self.device)
-        self.entropy_list = torch.empty((0,self.action_dim)).to(self.device)
-        self.state_list = torch.empty((0,self.state_dim)).to(self.device)
-        self.reward_list = torch.empty((0, 1)).to(self.device)
-        self.value_list = torch.empty((0, 1)).to(self.device)
+        self.log_prob_list = []
+        self.mu_list = []
+        self.entropy_list = []
+        self.state_list =   []
+        self.reward_list = []
+        self.value_list = []
+        # self.log_prob_list = torch.empty((0, self.action_dim)).to(self.device)
+        # self.mu_list = torch.empty((0,self.action_dim)).to(self.device)
+        # self.entropy_list = torch.empty((0,self.action_dim)).to(self.device)
+        # self.state_list = torch.empty((0,self.state_dim)).to(self.device)
+        # self.reward_list = torch.empty((0, 1)).to(self.device)
+        # self.value_list = torch.empty((0, 1)).to(self.device)
 
 
     def test_layers(self):
@@ -129,27 +126,28 @@ class IA2CAgent(nn.Module):
 
 
     def get_train_action(self, state):
-
         out = self.fc(state)
         mu = self.actor(out)
         # e.g., sigmoid output in [0,1] or tanh
-        # std = torch.exp(self.log_std)  # assuming you added this
-        # dist = torch.distributions.Normal(mu, std)
-        # action = dist.sample()  # ← critical!
-        # action = action *0.5 + 0.5
-        return mu.detach()
+        std = torch.exp(self.log_std)  # assuming you added this
+        dist = torch.distributions.Normal(mu, std)
+        action = dist.sample()  # ← critical!
+        action = action *0.5 + 0.5
+        return action.clamp(0.0, 1.0).detach(), mu.detach(), dist.log_prob(action).sum(dim=-1).detach(), dist.entropy().sum(dim=-1).detach()
 
     def get_reward(self, reward, next_state):
         reward = torch.tensor(reward, dtype=torch.float32).unsqueeze(0).to(self.device)  # ensure reward is a tensor
         next_state = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(self.device)
-        self.reward_list = torch.cat((self.reward_list, reward.unsqueeze(0)), dim=0)
-        self.state_list = torch.cat((self.state_list, next_state), dim=0)
+        self.reward_list.append(reward)
+        self.state_list.append(next_state)
+        # self.reward_list = torch.cat((self.reward_list, reward.unsqueeze(0)), dim=0)
+        # self.state_list = torch.cat((self.state_list, next_state), dim=0)
 
 
     def get_train_action_new(self, state):
         out = self.fc(state)
         value = self.critic(out)
-        mu = self.actor(out)  # ensure in [-1, 1]
+        mu = torch.tanh(self.actor(out))  # ensure in [-1, 1]
         std = torch.exp(self.log_std)
         dist = torch.distributions.Normal(mu, std)
         action = dist.rsample()  # <--- reparameterized sample
@@ -159,12 +157,15 @@ class IA2CAgent(nn.Module):
 
         scaled_action = (action * 0.5 + 0.5).clamp(0.0, 1.0)
 
-        self.mu_list =  torch.cat((self.mu_list, mu.unsqueeze(0).to(self.device)), dim=0)
-        self.log_prob_list = torch.cat((self.log_prob_list, log_prob.unsqueeze(0).to(self.device)), dim=0)
-        self.entropy_list = torch.cat((self.entropy_list, entropy.unsqueeze(0).to(self.device)), dim=0)
-        self.value_list = torch.cat((self.value_list, value.unsqueeze(0).to(self.device)), dim=0)
+        self.mu_list.append(mu)
+        self.log_prob_list.append(log_prob)
+        self.entropy_list.append(entropy)
+        self.value_list.append(value)
+        # self.log_prob_list = torch.cat((self.log_prob_list, log_prob.unsqueeze(0).to(self.device)), dim=0)
+        # self.entropy_list = torch.cat((self.entropy_list, entropy.unsqueeze(0).to(self.device)), dim=0)
+        # self.value_list = torch.cat((self.value_list, value.unsqueeze(0).to(self.device)), dim=0)
 
-        return mu.clone().detach()
+        return scaled_action.clone().detach()
 
     def get_value(self, state):
         _, value = self(state)
@@ -172,6 +173,8 @@ class IA2CAgent(nn.Module):
 
 
     def batch_update(self, episode_obs, episode_actions, episode_rewards, gamma=0.9):
+
+
         # states = episode_obs.unsqueeze(0)  # shape: [T, state_dim]
         states = episode_obs  # shape: [T, state_dim]
         actions = episode_actions  # shape: [T, action_dim]
@@ -216,6 +219,12 @@ class IA2CAgent(nn.Module):
         # Update networks
         self.optimizer.zero_grad()
         total_loss.backward()
+        for name, param in self.named_parameters():
+            if param.grad is None:
+                print(f"{name} has NO gradient!")
+            else:
+                print(f"{name} grad norm: {param.grad.norm().item():.6f}")
+
         torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
         # torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
         self.optimizer.step()
@@ -228,30 +237,66 @@ class IA2CAgent(nn.Module):
         return actor_loss.item(), critic_loss.item(), advantages.mean().item()
 
     def batch_update_new(self,  gamma=0.9):
+        for name, param in self.actor.named_parameters():
+            if param.grad is None:
+                print(f"Actor, {name} has no gradient!")
+        for name, param in self.fc.named_parameters():
+            if param.grad is None:
+                print(f"fc {name} has no gradient!")
+        for name, param in self.critic.named_parameters():
+            if param.grad is None:
+                print(f"critic {name} has no gradient!")
+        if self.log_std.grad is None:
+            print(f"log_std has no gradient!")
 
+        log_probs = torch.stack(self.log_prob_list, dim=0)
+        values = torch.stack(self.value_list, dim=0)
+        entropy = torch.stack(self.entropy_list, dim=0)
+        mu = torch.stack(self.mu_list, dim=0)
+        reward = torch.stack(self.reward_list, dim=0)
+        states = torch.stack(self.state_list, dim=0)
 
+        print(f"log_probs {log_probs.requires_grad}")
+        print(f"values {values.requires_grad}")
+        print(f"entropy {entropy.requires_grad}")
+        print(f"mu {mu.requires_grad}")
+        print(f"reward {reward.requires_grad}")
+        print(f"states {states.requires_grad}")
+        print("mu stats:", mu.min().item(), mu.max().item(), mu.mean().item())
         # Compute discounted returns
         returns = []
         G = 0
-        for r in reversed(self.reward_list):
+        for r in reversed(reward):
             G = r + gamma * G
             returns.insert(0, G)
         returns = torch.tensor(returns, dtype=torch.float32).unsqueeze(1).to(self.device)
 
-        advantages = returns - self.value_list.clone().detach()
-        actor_loss = (-self.log_prob_list * advantages - 0.01 * self.entropy_list).mean()
+        advantages = returns - values.clone().detach()
+        actor_loss = (-log_probs * advantages - 0.01 * entropy).mean()
 
         # Critic loss
-        critic_loss = F.smooth_l1_loss(self.value_list, returns)
+        critic_loss = F.smooth_l1_loss(values, returns)
         total_loss = actor_loss + critic_loss
 
         self.optimizer.zero_grad()
         total_loss.backward()
-
+        for name, param in self.named_parameters():
+            if param.grad is None:
+                print(f"{name} has NO gradient!")
+            else:
+                print(f"{name} grad norm: {param.grad.norm().item():.6f}")
         # torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
         # torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
         self.optimizer.step()
 
-        print(f"Actor loss: {actor_loss.item():.4f}, Critic loss: {critic_loss.item():.4f}")
+        print(f"Actor loss: {actor_loss.item():.4f}, Critic loss: {critic_loss.item():.4f}, Advantages mean: {advantages.mean().item():.4f}")
+
+        self.log_prob_list = log_probs
+        self.value_list = values
+        self.mu_list = mu
+        self.entropy_list = entropy
+        self.reward_list = reward
+        self.state_list = states
+
         return actor_loss.item(), critic_loss.item(), advantages.mean().item()
 
