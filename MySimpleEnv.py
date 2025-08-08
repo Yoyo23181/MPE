@@ -61,7 +61,7 @@ class mySimpleEnv(SimpleEnv):
         #             agent.action.u[1] = -1.0
         #         if action[0] == 4:
         #             agent.action.u[1] = +1.0
-            sensitivity = 5.0
+            sensitivity = 1.5
             if agent.accel is not None:
                 sensitivity = agent.accel
             agent.action.u *= sensitivity
