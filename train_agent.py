@@ -173,7 +173,7 @@ class train_agent:
             self.plot_update()
 
 
-        self.save_network("nn_agent.pth")
+        self.save_network("nn_agent_working.pth")
         self.final_plot()
 
     def save_network(self, filename):

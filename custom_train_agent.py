@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 from pettingzoo.utils.conversions import parallel_wrapper_fn
 from world import *
+# from new_agent import *
 from agent import *
 
 import matplotlib.pyplot as plt
@@ -366,18 +367,18 @@ class train_agent:
 
 
 if __name__=="__main__":
-    n_episodes = 1000
+    n_episodes = 100
     episode_steps = 200
     warmup_eps = 0  # number of episodes to explore randomly before training
     # network_path = "nn_agent_dir_good.pth"
-    # network_path = "nn_agent.pth"
-    # network_path = "nn_agent_real_1.pth"
+    # network_path = "nn_agent_working.pth"
+    # network_path = "nn_agent_real_first_train1.pth"
     network_path = None
     trainer = train_agent(n_episodes=n_episodes, episode_steps=episode_steps, warmup_eps=warmup_eps, networkpath=network_path)
-    trainer.train()
+    # trainer.train()
 
     food_positions = [
         (6.0, 0.0), (6.0, 6.0), (0.0, 6.0), (-6.0, 6.0), (-6.0, 0.0),
         (-6.0, -6.0), (0.0, -6.0), (6.0, -6.0), (3.0, 3.0), (-3.0, -3.0)
     ]
-    # trainer.evaluate(episodes=10, food_positions=food_positions, max_foods=10, tag="post_train_eval")
+    trainer.evaluate(episodes=10, food_positions=food_positions, max_foods=10, tag="post_train_eval")
