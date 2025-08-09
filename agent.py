@@ -57,7 +57,7 @@ class IA2CAgent(nn.Module):
         self.critic = nn.Sequential(nn.Linear(128, 1))
 
         self.log_std= torch.tensor([0.1], dtype=torch.float32).to(self.device)
-
+        # self.log_std = nn.Parameter(torch.log(torch.ones(self.action_dim, device=self.device) * 0.6))
         if training:
             self.optimizer = torch.optim.Adam(
                 list(self.fc.parameters()) +

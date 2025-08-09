@@ -53,16 +53,16 @@ class IA2CAgent(nn.Module):
         # self.fc = nn.LSTM(input_size=state_dim, hidden_size=128)
         # self.init_hidden(hidden_size=128, batch_size=1)
         self.actor = nn.Sequential(nn.Linear(128, self.action_dim), nn.Sigmoid())
-        # self.log_std = nn.Parameter(torch.zeros(action_dim))
+        # self.log_std = nn.Parameter(torch.ones(action_dim) * -0.5)
         self.critic = nn.Sequential(nn.Linear(128, 1))
 
-        self.log_std= torch.tensor([0.1], dtype=torch.float32).to(self.device)
+        self.log_std = nn.Parameter(torch.log(torch.ones(self.action_dim, device=self.device) * 0.6))
 
         if training:
             self.optimizer = torch.optim.Adam(
                 list(self.fc.parameters()) +
                 list(self.actor.parameters()) +
-                # [self.log_std] +
+                [self.log_std] +
                 list(self.critic.parameters()),
                 lr=learning_rate_actor,
                 eps=1e-5
@@ -128,7 +128,7 @@ class IA2CAgent(nn.Module):
         return a.detach()
 
 
-    def get_train_action(self, state, sigma=0.2):
+    def get_train_action(self, state):
 
         out = self.fc(state)
         mu = self.actor(out)
@@ -137,11 +137,7 @@ class IA2CAgent(nn.Module):
         # dist = torch.distributions.Normal(mu, std)
         # action = dist.sample()  # ← critical!
         # action = action *0.5 + 0.5
-
-        dist = torch.distributions.Normal(mu, torch.ones_like(mu) * sigma)
-        a = dist.sample()  # <-- sample, not mu
-        return a.clamp(0.0, 1.0).detach()
-        # return mu.detach()
+        return mu.detach()
 
     def get_reward(self, reward, next_state):
         reward = torch.tensor(reward, dtype=torch.float32).unsqueeze(0).to(self.device)  # ensure reward is a tensor
@@ -153,10 +149,10 @@ class IA2CAgent(nn.Module):
     def get_train_action_new(self, state):
         out = self.fc(state)
         value = self.critic(out)
-        mu = self.actor(out)
-        std = torch.exp(self.log_std)
+        mu = self.actor(out)  # ensure in [-1, 1]
+        std = torch.exp(self.log_std).expand_as(mu)
         dist = torch.distributions.Normal(mu, std)
-        action = dist.rsample()
+        action = dist.rsample()  # <--- reparameterized sample
 
         log_prob = dist.log_prob(action).sum(dim=-1, keepdim=True)
         entropy = dist.entropy().sum(dim=-1, keepdim=True)
@@ -168,59 +164,67 @@ class IA2CAgent(nn.Module):
         self.entropy_list = torch.cat((self.entropy_list, entropy.unsqueeze(0).to(self.device)), dim=0)
         self.value_list = torch.cat((self.value_list, value.unsqueeze(0).to(self.device)), dim=0)
 
-        return mu.clone().detach()
+        return scaled_action.clone().detach()
 
     def get_value(self, state):
         _, value = self(state)
         return value
 
-    def batch_update(self, episode_obs, episode_actions, episode_rewards,
-                     gamma=0.99, entropy_coef=0.01, critic_coef=0.5, sigma=0.2):
 
-        device = self.device
+    def batch_update(self, episode_obs, episode_actions, episode_rewards, gamma=0.9):
+        # states = episode_obs.unsqueeze(0)  # shape: [T, state_dim]
+        states = episode_obs  # shape: [T, state_dim]
+        actions = episode_actions  # shape: [T, action_dim]
+        rewards = episode_rewards # shape: [T]
 
-        states = episode_obs.to(device)  # [T, S]
-        actions = episode_actions.to(device)  # [T, A]
-        rewards = episode_rewards.to(device)  # [T]
+        # Compute discounted returns
+        returns = []
+        G = 0
+        for r in reversed(rewards):
+            G = r + gamma * G
+            returns.insert(0, G)
+        returns = torch.tensor(returns, dtype=torch.float32).unsqueeze(1).to(self.device)  # shape: [T, 1]
+        print("Returns stats:", returns.min().item(), returns.max().item(), returns.mean().item())
+        # Compute values and advantages
+        x = self.fc(states)
+        # self.init_hidden()
+        # lstm_out, _ = self.fc(states, self.hidden)  # [1, T, hidden_size]
+        # x = lstm_out.squeeze(0)
 
-        with torch.no_grad():
-            G = 0.0
-            rets = []
-            for r in reversed(rewards.tolist()):
-                G = r + gamma * G
-                rets.append(G)
-            returns = torch.tensor(list(reversed(rets)), dtype=torch.float32, device=device).unsqueeze(1)  # [T,1]
 
-        x = self.fc(states)  # [T,128]
-        values = self.critic(x)  # [T,1]
-        advantages = returns - values.detach()  # [T,1]
+        values = self.critic(x)  # shape: [T, 1]
+        print("Critic values:", values.min().item(), values.max().item(), values.mean().item())
+        advantages = returns - values.detach()  # detach to stop gradients from leaking
 
-        adv_mean = advantages.mean()
-        adv_std = advantages.std().clamp_min(1e-8)
-        advantages = (advantages - adv_mean) / adv_std
+        # Normalize advantage for stability
+        # advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        mu = self.actor(x)  # [T,A]
-        dist = torch.distributions.Normal(mu, torch.ones_like(mu) * sigma)
-        log_probs = dist.log_prob(actions).sum(dim=-1, keepdim=True)  # [T,1]
-        entropy = dist.entropy().sum(dim=-1, keepdim=True)  # [T,1]
+        # Get action distribution from actor
+        mu = self.actor(x) # shape: [T, action_dim]
+        dist = torch.distributions.Normal(mu, torch.ones_like(mu) * 0.2)
+        log_probs = dist.log_prob(actions).sum(dim=-1, keepdim=True)  # shape: [T, 1]
+        entropy = dist.entropy().sum(dim=-1, keepdim=True)  # shape: [T, 1]
+        # Losses
+        actor_loss = -log_probs * advantages - 0.2 * entropy
+        actor_loss = actor_loss.mean()
 
-        actor_loss = -(log_probs * advantages).mean() - entropy_coef * entropy.mean()
-        critic_loss = critic_coef * torch.nn.functional.smooth_l1_loss(values, returns)
-        loss = actor_loss + critic_loss
+        # critic_loss = (returns - values).pow(2).mean()
+        critic_loss = F.smooth_l1_loss(values, returns)
 
+        total_loss = actor_loss + critic_loss
+
+        # Update networks
         self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.parameters(), 0.5)
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
+        # torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
         self.optimizer.step()
 
-        with torch.no_grad():
-            print(
-                f"Batch update - Actor: {actor_loss.item():.4f}, "
-                f"Critic: {critic_loss.item():.4f}, "
-                f"Adv μ: {adv_mean.item():.4e}, σ: {adv_std.item():.4e}, "
-                f"logπ μ: {log_probs.mean().item():.4f}, H: {entropy.mean().item():.4f}"
-            )
+        # For logging
+        if self.training:
+            print(f"Batch update - Actor loss: {actor_loss.item():.4f}, Critic loss: {critic_loss.item():.4f}, advantage mean: {advantages.mean().item():.4f}")
 
+        self.training_error.append(total_loss.item())
         return actor_loss.item(), critic_loss.item(), advantages.mean().item()
 
     def batch_update_new(self,  gamma=0.9):
@@ -234,8 +238,9 @@ class IA2CAgent(nn.Module):
             returns.insert(0, G)
         returns = torch.tensor(returns, dtype=torch.float32).unsqueeze(1).to(self.device)
 
-        advantages = returns - self.value_list.clone().detach()
-        actor_loss = (-self.log_prob_list * advantages - 0.01 * self.entropy_list).mean()
+        advantages = returns - self.value_list.detach()
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        actor_loss = (-self.log_prob_list * advantages - 0.02 * self.entropy_list).mean()
 
         # Critic loss
         critic_loss = F.smooth_l1_loss(self.value_list, returns)
