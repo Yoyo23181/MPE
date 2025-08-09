@@ -163,18 +163,41 @@ class train_agent:
         # reward_during_time.append(reward)
         # local_rewards.append(reward[agent_id])
 
-    def train(self):
+    # def train(self):
+    #     self.init_plots()
+    #     for self.episode in tqdm(range(self.n_episodes)):
+    #         self.reset_lists()
+    #         self.run_episode()
+    #         self.update_agent()
+    #         # self.get_internal_state()
+    #
+    #         self.plot_update()
+    #
+    #
+    #     self.save_network("nn_agent_seems_to_work.pth")
+    #     self.final_plot()
+    def train(self, train=True):
         self.init_plots()
+        # --- Best-model tracking (init) ---
+        ema = None
+        alpha = 0.01  # EMA smoothing
+        best = -1e9
+
         for self.episode in tqdm(range(self.n_episodes)):
             self.reset_lists()
             self.run_episode()
             self.update_agent()
-            # self.get_internal_state()
+
+            # --- Best-model tracking (per-episode) ---
+            ep_return = float(self.local_total_rewards_list[-1])
+            ema = ep_return if ema is None else (1 - alpha) * ema + alpha * ep_return
+            if ema > best:
+                best = ema
+                torch.save(self.nn_agent.state_dict(), "best.pth")
 
             self.plot_update()
 
-
-        self.save_network("nn_agent_seems_to_work.pth")
+        self.save_network("nn_agent_last.pth")
         self.final_plot()
 
     def save_network(self, filename):
@@ -274,11 +297,11 @@ class train_agent:
 
 
 if __name__=="__main__":
-    n_episodes = 1000
+    n_episodes = 5000
     episode_steps = 200
-    warmup_eps = 100  # number of episodes to explore randomly before training
-    # network_path = "nn_agent_seems_to_work.pth"
-    network_path = None
+    warmup_eps = 200  # number of episodes to explore randomly before training
+    network_path = "best.pth"
+    # network_path = None
     trainer = train_agent(n_episodes=n_episodes, episode_steps=episode_steps, warmup_eps=warmup_eps, networkpath=network_path)
     trainer.train()
 

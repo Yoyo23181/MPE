@@ -56,8 +56,10 @@ class IA2CAgent(nn.Module):
         # self.log_std = nn.Parameter(torch.ones(action_dim) * -0.5)
         self.critic = nn.Sequential(nn.Linear(128, 1))
 
-        self.log_std = nn.Parameter(torch.log(torch.ones(self.action_dim, device=self.device) * 0.6))
-
+        # self.log_std = nn.Parameter(torch.log(torch.ones(self.action_dim, device=self.device) * 0.6))
+        self.log_std = nn.Parameter(torch.zeros(self.action_dim, device=self.device))
+        self.entropy_coef = 0.05  # start a bit higher; decay over training
+        self.min_std = 0.02
         if training:
             self.optimizer = torch.optim.Adam(
                 list(self.fc.parameters()) +
@@ -194,30 +196,50 @@ class IA2CAgent(nn.Module):
 
         values = self.critic(x)  # shape: [T, 1]
         print("Critic values:", values.min().item(), values.max().item(), values.mean().item())
-        advantages = returns - values.detach()  # detach to stop gradients from leaking
+        # advantages = returns - values.detach()  # detach to stop gradients from leaking
+        #
+        # # Normalize advantage for stability
+        # # advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        #
+        # # Get action distribution from actor
+        # mu = self.actor(x) # shape: [T, action_dim]
+        # dist = torch.distributions.Normal(mu, torch.ones_like(mu) * 0.2)
+        # log_probs = dist.log_prob(actions).sum(dim=-1, keepdim=True)  # shape: [T, 1]
+        # entropy = dist.entropy().sum(dim=-1, keepdim=True)  # shape: [T, 1]
+        # # Losses
+        # actor_loss = -log_probs * advantages - 0.2 * entropy
+        # actor_loss = actor_loss.mean()
+        #
+        # # critic_loss = (returns - values).pow(2).mean()
+        # critic_loss = F.smooth_l1_loss(values, returns)
+        #
+        # total_loss = actor_loss + critic_loss
+        #
+        # # Update networks
+        # self.optimizer.zero_grad()
+        # total_loss.backward()
+        # torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
+        # # torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
+        # self.optimizer.step()
 
-        # Normalize advantage for stability
-        # advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        # values/returns same as you have...
+        advantages = returns - values.detach()
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # Get action distribution from actor
-        mu = self.actor(x) # shape: [T, action_dim]
-        dist = torch.distributions.Normal(mu, torch.ones_like(mu) * 0.2)
-        log_probs = dist.log_prob(actions).sum(dim=-1, keepdim=True)  # shape: [T, 1]
-        entropy = dist.entropy().sum(dim=-1, keepdim=True)  # shape: [T, 1]
-        # Losses
-        actor_loss = -log_probs * advantages - 0.2 * entropy
-        actor_loss = actor_loss.mean()
+        mu = self.actor(x)
+        std = torch.exp(self.log_std).clamp_min(self.min_std).expand_as(mu)
+        dist = torch.distributions.Normal(mu, std)
 
-        # critic_loss = (returns - values).pow(2).mean()
+        log_probs = dist.log_prob(actions).sum(dim=-1, keepdim=True)
+        entropy = dist.entropy().sum(dim=-1, keepdim=True)
+
+        actor_loss = (-log_probs * advantages - self.entropy_coef * entropy).mean()
         critic_loss = F.smooth_l1_loss(values, returns)
-
         total_loss = actor_loss + critic_loss
-
-        # Update networks
         self.optimizer.zero_grad()
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
-        # torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(list(self.actor.parameters()) + list(self.fc.parameters()), 0.5)
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
         self.optimizer.step()
 
         # For logging
@@ -227,32 +249,30 @@ class IA2CAgent(nn.Module):
         self.training_error.append(total_loss.item())
         return actor_loss.item(), critic_loss.item(), advantages.mean().item()
 
-    def batch_update_new(self,  gamma=0.9):
+    def batch_update_new(self, gamma=0.99):
+        # Bootstrap with V(last_state)
+        with torch.no_grad():
+            last_v = self.critic(self.fc(self.state_list[-1].unsqueeze(0))).squeeze(0)  # [1,1] -> [1]
 
-
-        # Compute discounted returns
         returns = []
-        G = 0
-        for r in reversed(self.reward_list):
+        G = last_v  # bootstrap
+        for r in reversed(self.reward_list):  # r shape [1]
             G = r + gamma * G
             returns.insert(0, G)
-        returns = torch.tensor(returns, dtype=torch.float32).unsqueeze(1).to(self.device)
+        returns = torch.stack(returns, dim=0)  # [T,1]
 
         advantages = returns - self.value_list.detach()
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        actor_loss = (-self.log_prob_list * advantages - 0.02 * self.entropy_list).mean()
 
-        # Critic loss
+        actor_loss = (-self.log_prob_list * advantages - self.entropy_coef * self.entropy_list).mean()
         critic_loss = F.smooth_l1_loss(self.value_list, returns)
-        total_loss = actor_loss + critic_loss
 
         self.optimizer.zero_grad()
-        total_loss.backward()
-
-        # torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
-        # torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
+        (actor_loss + critic_loss).backward()
+        torch.nn.utils.clip_grad_norm_(list(self.actor.parameters()) + list(self.fc.parameters()), 0.5)
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
         self.optimizer.step()
 
-        print(f"Actor loss: {actor_loss.item():.4f}, Critic loss: {critic_loss.item():.4f}")
         return actor_loss.item(), critic_loss.item(), advantages.mean().item()
+
 
