@@ -193,11 +193,11 @@ class train_agent:
             ema = ep_return if ema is None else (1 - alpha) * ema + alpha * ep_return
             if ema > best:
                 best = ema
-                torch.save(self.nn_agent.state_dict(), "best.pth")
+                torch.save(self.nn_agent.state_dict(), "best_1000000.pth")
 
             self.plot_update()
 
-        self.save_network("nn_agent_last.pth")
+        self.save_network("nn_agent_both_speed.pth")
         self.final_plot()
 
     def save_network(self, filename):
@@ -300,8 +300,8 @@ if __name__=="__main__":
     n_episodes = 5000
     episode_steps = 200
     warmup_eps = 200  # number of episodes to explore randomly before training
-    network_path = "best.pth"
-    # network_path = None
+    # network_path = "nn_agent_seems_to_work.pth"
+    network_path = None
     trainer = train_agent(n_episodes=n_episodes, episode_steps=episode_steps, warmup_eps=warmup_eps, networkpath=network_path)
     trainer.train()
 

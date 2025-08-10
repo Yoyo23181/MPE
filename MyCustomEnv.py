@@ -32,11 +32,11 @@ class mySimpleEnv(SimpleEnv):
         agent.action.u = np.zeros(self.world.dim_p)
         agent.action.c = np.zeros(self.world.dim_c)
         if agent.movable:
-            # act = np.array([(action[0][0]-0.5)*2, (action[0][1]-0.5)*2])
+            # act = np.array([(action[0][0]-0.5)*2, (action[0][1]-0.5)*2]) # this one to commented speed
             # act = act / np.linalg.norm(act)
             # create a vector with the direction of the action
-            dir = (action[0][0]-0.5)*2*np.pi
-            act = np.array([np.cos(dir), np.sin(dir)])
+            dir = (action[0][0]-0.5)*2*np.pi # this one to commented direction
+            act = np.array([np.cos(dir), np.sin(dir)]) # this one to commented direction
 
 
             agent.action.u= act
