@@ -213,7 +213,7 @@ class Scenario(BaseScenario):
 
             # if total_weight >= landmark.weight and current_distance < radius:
             if current_distance <= radius:
-                reward += 10
+                # reward += 10
                 agent.prev_distance = None  # reset the previous distance
                 world.landmarks.remove(landmark)
                 new_lm = Landmark()

@@ -198,7 +198,7 @@ class Scenario(BaseScenario):
                 speed = agent.prev_distance - current_distance
                 agent.entity_speed = speed
                 # shaping = speed*10
-                reward += speed*10
+                # reward += speed*10
                 # shaping = np.clip(shaping, -1, 1)
                 # reward += 10/(current_distance-radius)
             agent.prev_distance = current_distance

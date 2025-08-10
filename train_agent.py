@@ -26,7 +26,7 @@ class train_agent:
         self.n_episodes = n_episodes
         self.episode_steps = episode_steps
         self.warmup_eps = warmup_eps
-        self.action_dim = 1
+        self.action_dim = 2
         self.episode = 0
 
         self.init_agent()
@@ -173,7 +173,7 @@ class train_agent:
             self.plot_update()
 
 
-        self.save_network("nn_agent_both_direction.pth")
+        self.save_network("nn_agent_non_parse_speed_second.pth")
         self.final_plot()
 
     def save_network(self, filename):
@@ -275,9 +275,10 @@ class train_agent:
 if __name__=="__main__":
     n_episodes = 1000
     episode_steps = 200
-    warmup_eps = 0  # number of episodes to explore randomly before training
-    network_path = "nn_agent_both_direction.pth"
-    # network_path = None
+    warmup_eps = 100  # number of episodes to explore randomly before training
+    # network_path = "nn_agent_both_direction.pth"
+    # network_path = "best_1000000.pth"
+    network_path = None
     trainer = train_agent(n_episodes=n_episodes, episode_steps=episode_steps, warmup_eps=warmup_eps, networkpath=network_path)
     trainer.train()
 
