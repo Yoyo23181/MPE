@@ -6,7 +6,6 @@ import numpy as np
 from pettingzoo.utils.conversions import parallel_wrapper_fn
 from world import *
 from new_agent import *
-# from agent import *
 
 import matplotlib.pyplot as plt
 import matplotlib
@@ -15,7 +14,7 @@ import time
 
 plt.ion()  # Turn on interactive mode
 
-
+import os
 import torch
 
 
@@ -27,7 +26,7 @@ class train_agent:
         self.n_episodes = n_episodes
         self.episode_steps = episode_steps
         self.warmup_eps = warmup_eps
-        self.action_dim = 2
+        self.action_dim = 1
         self.episode = 0
 
         self.init_agent()
@@ -39,6 +38,10 @@ class train_agent:
         self.advantage_list = []
         self.total_rewards_list = []
 
+
+        self.ep_consumptions = []
+        self.ep_first_consume_step = []
+        self.ep_avg_min_dist = []
 
     def init_agent(self):
 
@@ -72,6 +75,12 @@ class train_agent:
         self.mu_list = []
         self.entropy_list = []
 
+
+        self.consumptions_in_episode = 0
+        self.first_consumption_step = None
+        self.min_dist_accum = 0.0
+        self.min_dist_steps = 0
+
     def init_trianing_lists(self):
         self.episode_actions =[]
         self.episode_obs = []
@@ -92,9 +101,21 @@ class train_agent:
             self.local_total_rewards_list.append(np.sum(np.array(self.local_rewards)))
             self.obs_list.append(obs)  # assuming a single agent for simplicity
             self.action_list.append(action)
-            # self.prob_list.append(log_prob)
-            # self.mu_list.append(mu)
-            # self.entropy_list.append(entropy)
+
+
+        dists = [np.linalg.norm(agent.state.p_pos - lm.state.p_pos)
+                 for lm in self.env.aec_env.world.landmarks
+                 for agent in self.env.aec_env.world.agents[:1]]  # single agent
+        if len(dists):
+            self.min_dist_accum += float(np.min(dists))
+            self.min_dist_steps += 1
+
+        consumed = getattr(self.env.aec_env.world.agents[0], "_consumed_this_step", False)
+        if consumed:
+            self.consumptions_in_episode += 1
+            if self.first_consumption_step is None:
+                self.first_consumption_step = len(self.local_rewards)
+            setattr(self.env.aec_env.world.agents[0], "_consumed_this_step", False)  # reset flag
 
     def log_training_batch(self, obs , reward,action):
         self.episode_actions.append(action)  # convert to numpy array and append to the list
@@ -118,27 +139,26 @@ class train_agent:
 
     def update_agent(self):
 
-
         actor_loss, critic_loss, avantage = self.nn_agent.batch_update(torch.Tensor(self.episode_obs[1:]).to(self.device),
                                                                       torch.Tensor(self.episode_actions).to(self.device),
                                                                       torch.Tensor(self.episode_rewards).to(self.device))
-
 
         self.actor_loss_list.append(actor_loss)
         self.critic_loss_list.append(critic_loss)
         self.advantage_list.append(avantage)
         self.total_rewards_list.append(self.local_total_rewards_list[-1])
 
+        avg_min_dist = (self.min_dist_accum / max(1, self.min_dist_steps)) if self.min_dist_steps else None
+        self.ep_consumptions.append(self.consumptions_in_episode)
+        self.ep_first_consume_step.append(self.first_consumption_step if self.first_consumption_step is not None else self.episode_steps)
+        self.ep_avg_min_dist.append(avg_min_dist)
+
     def step(self):
         actions = {}
         agent_id = f"agent_0"  # assuming a single agent for simplicity
 
-        # for i, agent in enumerate(self.env.aec_env.world.agents):
         if self.episode < self.warmup_eps:
-            # action_nn = self.env.action_space(agent_id).sample()
-            # action= [(action_nn[2] - action_nn[1])/2 +0.5 , (action_nn[4] - action_nn[3])/2 +0.5]  # convert to [0, 1] range
             action = np.random.uniform(0, 1, size=(self.action_dim)) # random action in [0, 1] range
-            # action_dir =
             action_nn = np.array(action)
             mu = np.zeros_like(action_nn)
             log_prob = np.zeros_like(action_nn)
@@ -154,51 +174,154 @@ class train_agent:
         next_obs, reward, terminated, truncated, info = self.env.step(actions)
         self.nn_agent.get_reward(reward[agent_id], next_obs[agent_id])  # store the reward and next observation for training
         return next_obs[agent_id], reward[agent_id], action_nn  # return the observation, reward and action for the agent
-        # self.obs = next_obs  # update the observation for the next step
-        #
-        #
-        #
-        # # print("next_obs[agent_id] shape:", next_obs[agent_id].shape)
-        #
-        # reward_during_time.append(reward)
-        # local_rewards.append(reward[agent_id])
 
-    # def train(self):
-    #     self.init_plots()
-    #     for self.episode in tqdm(range(self.n_episodes)):
-    #         self.reset_lists()
-    #         self.run_episode()
-    #         self.update_agent()
-    #         # self.get_internal_state()
-    #
-    #         self.plot_update()
-    #
-    #
-    #     self.save_network("nn_agent_seems_to_work.pth")
-    #     self.final_plot()
-    def train(self, train=True):
+    def train(self):
+        best_eval = -1e9
+        food_positions = [
+            (6.0, 0.0), (6.0, 6.0), (0.0, 6.0), (-6.0, 6.0), (-6.0, 0.0),
+            (-6.0, -6.0), (0.0, -6.0), (6.0, -6.0), (3.0, 3.0), (-3.0, -3.0)
+        ]
         self.init_plots()
-        # --- Best-model tracking (init) ---
-        ema = None
-        alpha = 0.01  # EMA smoothing
-        best = -1e9
-
         for self.episode in tqdm(range(self.n_episodes)):
             self.reset_lists()
             self.run_episode()
             self.update_agent()
-
-            # --- Best-model tracking (per-episode) ---
-            ep_return = float(self.local_total_rewards_list[-1])
-            ema = ep_return if ema is None else (1 - alpha) * ema + alpha * ep_return
-            if ema > best:
-                best = ema
-                torch.save(self.nn_agent.state_dict(), "best_1000000.pth")
-
             self.plot_update()
+            # if (self.episode + 1) % 1000 == 0:
+            #     res = self.evaluate(episodes=10, food_positions=food_positions, max_foods=10,
+            #                         tag=f"eval_ep{self.episode + 1}")
+            #     avg_ret = float(np.mean(res["episode_return"]))
+            #     if avg_ret > best_eval:
+            #         best_eval = avg_ret
+            #         self.save_network("nn_agent_best.pth")
+            #         print(f"New best avg return {best_eval:.2f} at ep {self.episode + 1}; saved nn_agent_best.pth")
 
-        self.save_network("nn_agent_parse_direction.pth")
+        self.save_network("nn_agent_non_parse_dir.pth")
         self.final_plot()
+
+    def evaluate(self, episodes=5, food_positions=None, max_foods=10, tag="eval"):
+        """Deterministic evaluation with agent at (0,0) and landmark cycling through given positions."""
+        self.env = parallel_wrapper_fn(my_raw_env)(
+            render_mode="rgb_array",
+            continuous_actions=True,
+            eval_mode=True,
+            food_positions=food_positions or []
+        )
+        self.nn_agent.eval()
+
+        results = {
+            "episode_return": [],
+            "steps_to_each_consumption": [],
+            "foods_eaten": [],
+            "total_steps_to_eat_all": []
+        }
+
+        for ep in range(episodes):
+            obs, _ = self.env.reset(seed=ep)
+            agent_id = "agent_0"
+            total_r = 0.0
+            steps = 0
+            eaten = 0
+            per_food_steps = []
+            steps_since_last = 0
+
+            while steps < self.episode_steps:
+                state = torch.FloatTensor(obs[agent_id]).unsqueeze(0).to(self.device)
+                with torch.no_grad():
+                    out = self.nn_agent.fc(state)
+                    mu = self.nn_agent.actor(out)
+                    action_to_env = mu.squeeze(0).cpu().numpy()
+
+                next_obs, reward, terminated, truncated, info = self.env.step({agent_id: action_to_env})
+                total_r += float(reward[agent_id])
+                steps += 1
+                steps_since_last += 1
+
+                consumed = getattr(self.env.aec_env.world.agents[0], "_consumed_this_step", False)
+                if consumed:
+                    eaten += 1
+                    per_food_steps.append(steps_since_last)
+                    steps_since_last = 0
+                    setattr(self.env.aec_env.world.agents[0], "_consumed_this_step", False)
+                    if eaten >= max_foods:
+                        break
+
+                obs = next_obs
+                if terminated[agent_id] or truncated[agent_id]:
+                    break
+
+            results["episode_return"].append(total_r)
+            results["steps_to_each_consumption"].append(per_food_steps)
+            results["foods_eaten"].append(eaten)
+            results["total_steps_to_eat_all"].append(sum(per_food_steps) if per_food_steps else None)
+
+        # --- Plotting the reward and moving average ---
+        plt.figure(figsize=(8,4))
+        plt.plot(results["episode_return"], label="Episode reward")
+        if len(results["episode_return"]) >= 5:
+            window = min(10, len(results["episode_return"]))
+            moving_avg = np.convolve(results["episode_return"], np.ones(window)/window, mode='valid')
+            plt.plot(range(window-1, len(results["episode_return"])), moving_avg, label=f"{window}-ep moving avg", linewidth=2)
+        plt.title(f"Evaluation Reward Curve ({tag})")
+        plt.xlabel("Episode")
+        plt.ylabel("Total reward")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+        # ----------------------------------------------
+
+        print(f"[{tag}] avg return: {np.mean(results['episode_return']):.2f}, "
+              f"avg foods eaten: {np.mean(results['foods_eaten']):.2f}, "
+              f"avg steps/food: {np.mean([np.mean(x) for x in results['steps_to_each_consumption'] if x]):.1f}")
+
+        return results
+
+    def evaluate_avg_food(self, episodes=100, food_positions=None, max_foods=10):
+        # Build eval env with fixed landmark positions (cycled)
+        self.env = parallel_wrapper_fn(my_raw_env)(
+            render_mode="rgb_array",
+            continuous_actions=True,
+            eval_mode=True,
+            food_positions=food_positions or []
+        )
+        self.nn_agent.eval()
+
+        foods_per_ep = []
+        agent_id = "agent_0"
+
+        for ep in range(episodes):
+            obs, _ = self.env.reset(seed=ep)
+            eaten = 0
+            steps = 0
+
+            while steps < self.episode_steps:
+                # deterministic action (mean)
+                state = torch.as_tensor(obs[agent_id], dtype=torch.float32, device=self.device).unsqueeze(0)
+                with torch.no_grad():
+                    out = self.nn_agent.fc(state)
+                    mu = self.nn_agent.actor(out)  # in [0,1]
+                    action = mu.squeeze(0).cpu().numpy()
+
+                next_obs, reward, terminated, truncated, info = self.env.step({agent_id: action})
+
+                # count consumption via the flag set by the env
+                consumed = getattr(self.env.aec_env.world.agents[0], "_consumed_this_step", False)
+                if consumed:
+                    eaten += 1
+                    setattr(self.env.aec_env.world.agents[0], "_consumed_this_step", False)
+                    if eaten >= max_foods:
+                        break
+
+                obs = next_obs
+                steps += 1
+                if terminated[agent_id] or truncated[agent_id]:
+                    break
+
+            foods_per_ep.append(eaten)
+
+        avg_foods = float(np.mean(foods_per_ep)) if len(foods_per_ep) else 0.0
+        print(f"Average foods eaten per episode over {episodes} eps: {avg_foods:.2f}")
+        return avg_foods
 
     def save_network(self, filename):
         if os.path.exists(filename):
@@ -239,11 +362,8 @@ class train_agent:
         self.ax_total_reward.set_ylabel("Total Reward")
         self.ax_action.set_ylabel("Actor loss")
         self.ax_reward_local.set_ylim(0,1)
-        # self.ax_reward_local.plot(self.action_list, label="action")
-        # ax_h.set_ylabel("Action NN")
 
         self.ax_critic.set_ylabel("Critic loss")
-        # self.ax_reward_local.plot(self.local_rewards, c="tab:purple")
         self.ax_reward_local.plot(self.obs_list, label="obs")
         self.ax_reward_local.legend(loc="upper left")
         self.ax_total_reward.plot(self.local_total_rewards_list)
@@ -262,7 +382,6 @@ class train_agent:
         self.ax_action.plot(self.prob_list, c="tab:green", label="log_prob")
         self.ax_action.plot(self.entropy_list, c="tab:red", label="entropy")
         self.ax_action.set_xlabel("step")
-        # self.ax_action.set_ylabel("Actor loss")
         self.ax_plot.set_xlabel("plot_x")
         self.ax_plot.set_ylabel("plot_y")
         self.ax_reward_local.set_xlabel("step")
@@ -294,48 +413,19 @@ class train_agent:
         plt.show()
 
 
-
-
 if __name__=="__main__":
     n_episodes = 1000
     episode_steps = 200
-    warmup_eps = 100  # number of episodes to explore randomly before training
-    # network_path = "nn_agent_seems_to_work.pth"
-    network_path = None
+    warmup_eps = 0  # number of episodes to explore randomly before training
+    # network_path = "nn_agent_dir_good.pth"
+    network_path = "nn_agent_non_parse_dir.pth"
+    # network_path = "nn_agent_real_1.pth"
+    # network_path = None
     trainer = train_agent(n_episodes=n_episodes, episode_steps=episode_steps, warmup_eps=warmup_eps, networkpath=network_path)
     trainer.train()
-
-    # ===== Deterministic test (parallel PettingZoo env) =====
-    test_episodes = 10
-    env = trainer.env  # same env you trained on
-    agent_id = "agent_0"
-
-    trainer.nn_agent.eval()  # eval mode (turns off dropout, etc.)
-
-    avg = []
-    with torch.no_grad():  # no gradients during testing
-        for ep in range(test_episodes):
-            obs, _ = env.reset(seed=123 + ep)  # obs is a dict
-            ep_ret = 0.0
-
-            for _ in range(trainer.episode_steps):
-                # get this agent's observation
-                s = torch.as_tensor(obs[agent_id], dtype=torch.float32, device=trainer.device)
-
-                # deterministic action (use your helper)
-                a_t = trainer.nn_agent.get_deterministic_action(s.unsqueeze(0))  # [1, act_dim] tensor in [0,1]
-                a_np = a_t.squeeze(0).cpu().numpy()
-
-                # step requires a dict of actions
-                next_obs, rewards, terminated, truncated, info = env.step({agent_id: a_np})
-
-                ep_ret += float(rewards[agent_id])
-                obs = next_obs
-
-                if terminated[agent_id] or truncated[agent_id]:
-                    break
-
-            avg.append(ep_ret)
-
-    print(f"Average test reward over {test_episodes} episodes: {np.mean(avg):.2f} ± {np.std(avg):.2f}")
-
+    #
+    food_positions = [
+        (6.0, 0.0), (6.0, 6.0), (0.0, 6.0), (-6.0, 6.0), (-6.0, 0.0),
+        (-6.0, -6.0), (0.0, -6.0), (6.0, -6.0), (3.0, 3.0), (-3.0, -3.0)
+    ]
+    trainer.evaluate(episodes=10, food_positions=food_positions, max_foods=10)
